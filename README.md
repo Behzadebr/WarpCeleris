@@ -1,4 +1,4 @@
-# Python Wave Simulator Project - Celeris2024
+# Python Wave Simulator Using NVIDIA Warp
 
 ## Overview
 The Python Wave Simulator Project, part of the Celeris2023 initiative, aims to model wave dynamics with high accuracy using advanced computational technologies. This project utilizes NVIDIA Warp for writing high-performance simulation and graphics code, focusing on GPU programming for real-time and faster-than-real-time simulations. Key objectives include capturing detailed wave dynamics, achieving efficient computational performance, and providing a user-friendly interface for simulation control and visualization.
