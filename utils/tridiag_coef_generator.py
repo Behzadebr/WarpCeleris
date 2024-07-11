@@ -4,7 +4,7 @@ class TridiagCoefGenerator:
     def __init__(self):
         pass
 
-    def generate_tridiag_coef_x(self, sim_params, bottom_surface):
+    def generate_tridiag_coef_y(self, sim_params, bottom_surface):  #Check this again. Changed it to y as a hack
         """
         Generate tridiagonal coefficients in the x direction.
 
@@ -52,7 +52,7 @@ class TridiagCoefGenerator:
 
         return data
 
-    def generate_tridiag_coef_y(self, sim_params, bottom_surface):
+    def generate_tridiag_coef_x(self, sim_params, bottom_surface):  #Check this again. Changed it to x as a hack
         """
         Generate tridiagonal coefficients in the y direction.
 

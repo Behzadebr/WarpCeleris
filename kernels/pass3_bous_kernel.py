@@ -117,6 +117,7 @@ def pass3_bous_kernel(txState: wp.array2d(dtype=wp.vec4), txBottom: wp.array2d(d
         d_right = seaLevel - B_east
         d_down = seaLevel - B_south
         d_up = seaLevel - B_north
+        
         d_left_left = wp.max(0.0, seaLevel - txBottom[leftleftIdx[0], leftleftIdx[1]][2])
         d_right_right = wp.max(0.0, seaLevel - txBottom[rightrightIdx[0], rightrightIdx[1]][2])
         d_down_down = wp.max(0.0, seaLevel - txBottom[downdownIdx[0], downdownIdx[1]][2])

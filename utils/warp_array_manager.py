@@ -46,3 +46,5 @@ class WarpArrayManager:
         self.coefMatx = self.create_warp_array(tridiag_coef_x_data, wp.vec4)
         self.coefMaty = self.create_warp_array(tridiag_coef_y_data, wp.vec4)
         self.newcoef = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
+        self.testx = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
+        self.testy = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)

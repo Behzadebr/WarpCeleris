@@ -15,7 +15,7 @@ def launch_boundary_pass(wp_arr, sim_params, total_time, device="cuda"):
         kernel=boundary_pass_kernel,
         dim=wp_arr.txBottom.shape,
         inputs=[
-            wp_arr.current_stateUVstar, wp_arr.txBottom, wp_arr.txWaves, wp_arr.txtemp,     #check the args(current_stateUVstar and )
+            wp_arr.current_stateUVstar, wp_arr.txBottom, wp_arr.txWaves, wp_arr.txtemp,
             sim_params.WIDTH, sim_params.HEIGHT, sim_params.dt, sim_params.dx, sim_params.dy,
             total_time, sim_params.reflect_x, sim_params.reflect_y,
             math.pi, sim_params.BoundaryWidth, sim_params.seaLevel,
@@ -84,6 +84,7 @@ def launch_pass2(wp_arr, sim_params, device="cuda"):
 
 # Helper function to launch tridiag_pcrx kernel
 def launch_tridiag_pcrx(wp_arr, sim_params, device="cuda"):
+    wp.copy(src=wp_arr.coefMatx, dest=wp_arr.testx)
     if sim_params.NLSW_or_Bous == 0:
         wp.copy(src=wp_arr.current_stateUVstar, dest=wp_arr.txNewState)
     else:
@@ -108,16 +109,19 @@ def launch_tridiag_pcrx(wp_arr, sim_params, device="cuda"):
             # Copy new textures to old ones only if the loop counter is less than Px - 1
             if p < sim_params.Px - 1:
                 wp.copy(src=wp_arr.txtemp, dest=wp_arr.newcoef)
-                wp_arr.coefMatx = wp_arr.newcoef
+                wp.copy(src=wp_arr.newcoef, dest=wp_arr.coefMatx)
 
         # After all the iterations, copy the new state into the current state
         wp.copy(src=wp_arr.txtemp2, dest=wp_arr.txNewState)
 
     wp.synchronize()
 
+    wp.copy(src=wp_arr.testx, dest=wp_arr.coefMatx)
+
 
 # Helper function to launch tridiag_pcry kernel
 def launch_tridiag_pcry(wp_arr, sim_params, device="cuda"):
+    wp.copy(src=wp_arr.coefMaty, dest=wp_arr.testy)
     if sim_params.NLSW_or_Bous == 0:
         wp.copy(src=wp_arr.current_stateUVstar, dest=wp_arr.txNewState)
     else:
@@ -142,12 +146,14 @@ def launch_tridiag_pcry(wp_arr, sim_params, device="cuda"):
             # Copy new textures to old ones only if the loop counter is less than Py - 1
             if p < sim_params.Py - 1:
                 wp.copy(src=wp_arr.txtemp, dest=wp_arr.newcoef)
-                wp_arr.coefMaty = wp_arr.newcoef
+                wp.copy(src=wp_arr.newcoef, dest=wp_arr.coefMaty)
 
         # After all the iterations, copy the new state into the current state
         wp.copy(src=wp_arr.txtemp2, dest=wp_arr.txNewState)
 
     wp.synchronize()
+
+    wp.copy(src=wp_arr.testy, dest=wp_arr.coefMaty)
 
 
 # Helper function to launch pass3_nlsw kernel

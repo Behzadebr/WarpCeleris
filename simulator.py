@@ -138,14 +138,18 @@ def run_simulation(wp_arr, sim_params, total_steps):
         # Calculate and log the simulation speed
         elapsed_real_time = (datetime.now() - start_time).total_seconds()
         sim_speed = total_time / elapsed_real_time if elapsed_real_time > 0 else 0
-        print(f"Iteration {frame_count}: Simulated Time = {total_time:.2f} s, Real Time = {elapsed_real_time:.2f} s, Speed = {sim_speed:.2f}x real time")
+        # print(f"Iteration {frame_count}: Simulated Time = {total_time:.2f} s, Real Time = {elapsed_real_time:.2f} s, Speed = {sim_speed:.2f}x real time")
 
         # # For debugging, print the shape and first element of txState Warp array
         # print(frame_count)
-        # print(wp_arr.txState.numpy()[1000, 500])
+        print(wp_arr.txState.numpy()[1000, 500])
 
 # Define the total number of steps for the simulation
 total_steps = 1000  # Example: 1000 time steps
 
 # Run the simulation
 run_simulation(wp_arr, sim_params, total_steps)
+
+
+# print(wp_arr.coefMatx.numpy()[0, 500])
+# print(wp_arr.coefMaty.numpy()[0, 500])
