@@ -51,7 +51,8 @@ The Python Wave Simulator Project, part of the Celeris2023 initiative, aims to m
     ```
 
 ## Contributions
-- **Behzad Ebrahimi:** Project lead, focusing on simulation architecture, Warp kernels, and GPU utilization.
+- **Prof. Patrick Lynett:** Project lead, Advisor.
+- **Behzad Ebrahimi:** Developer, focusing on simulation architecture, Warp kernels, and GPU utilization.
 
 ## Contact
 For questions, please contact Behzad Ebrahimi at bebrahim@usc.edu
