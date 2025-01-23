@@ -1,101 +1,53 @@
-import numpy as np
+# utils/tridiag_coef_generator.py
+
+import warp as wp
+from kernels.tridiag_coeffs_X import tridiag_coeffs_X
+from kernels.tridiag_coeffs_Y import tridiag_coeffs_Y
 
 class TridiagCoefGenerator:
-    def __init__(self):
-        pass
-
-    def generate_tridiag_coef_y(self, sim_params, bottom_surface):  #Check this again. Changed it to y as a hack
+    def __init__(self, sim_params, warp_array_manager):
         """
-        Generate tridiagonal coefficients in the x direction.
-
-        Args:
-            sim_params (SimulationParameters): The simulation parameters object containing the necessary parameters.
-            bottom_surface (np.ndarray): The 2D array containing the bottom surface data.
-
-        Returns:
-            np.ndarray: A 2D array of shape (height, width, 4) containing the tridiagonal coefficients in the x direction.
+        Initialize the TridiagCoefGenerator with simulation parameters and Warp arrays.
         """
-        width = sim_params.WIDTH
-        height = sim_params.HEIGHT
-        Bcoef = sim_params.Bcoef
-        dx = sim_params.dx
+        self.sim_params = sim_params
+        self.warp_array_manager = warp_array_manager
 
-        data = np.zeros((height, width, 4), dtype=np.float32)
-
-        # Extract depth from bottom_surface
-        depth_here = -bottom_surface[:, :, 2]
-        depth_plus = np.roll(depth_here, -1, axis=1)
-        depth_minus = np.roll(depth_here, 1, axis=1)
-
-        d_dx = (depth_plus - depth_minus) / (2.0 * dx)
-        a = depth_here * d_dx / (6.0 * dx) - (Bcoef + 1.0 / 3.0) * depth_here**2 / (dx * dx)
-        b = 1.0 + 2.0 * (Bcoef + 1.0 / 3.0) * depth_here**2 / (dx * dx)
-        c = -depth_here * d_dx / (6.0 * dx) - (Bcoef + 1.0 / 3.0) * depth_here**2 / (dx * dx)
-
-        # Boundary conditions
-        b[:, :3] = 1.0
-        b[:, -3:] = 1.0
-        a[:, :3] = 0.0
-        a[:, -3:] = 0.0
-        c[:, :3] = 0.0
-        c[:, -3:] = 0.0
-
-        # Near dry conditions
-        mask = bottom_surface[:, :, 3] < 0
-        a[mask] = 0.0
-        b[mask] = 1.0
-        c[mask] = 0.0
-
-        data[:, :, 0] = a
-        data[:, :, 1] = b
-        data[:, :, 2] = c
-
-        return data
-
-    def generate_tridiag_coef_x(self, sim_params, bottom_surface):  #Check this again. Changed it to x as a hack
+    def generate_coefMatx(self):
         """
-        Generate tridiagonal coefficients in the y direction.
-
-        Args:
-            sim_params (SimulationParameters): The simulation parameters object containing the necessary parameters.
-            bottom_surface (np.ndarray): The 2D array containing the bottom surface data.
-
-        Returns:
-            np.ndarray: A 2D array of shape (height, width, 4) containing the tridiagonal coefficients in the y direction.
+        Launch the tridiag_coeffs_X kernel to fill coefMatx.
         """
-        width = sim_params.WIDTH
-        height = sim_params.HEIGHT
-        Bcoef = sim_params.Bcoef
-        dy = sim_params.dy
+        wp.launch(
+            kernel=tridiag_coeffs_X,
+            dim=(self.sim_params.WIDTH, self.sim_params.HEIGHT),
+            inputs=[
+                self.warp_array_manager.Bottom,
+                self.warp_array_manager.coefMatx,
+                self.sim_params.dx,
+                self.sim_params.Bcoef,
+                self.sim_params.WIDTH,
+                self.sim_params.HEIGHT
+            ],
+            device=self.sim_params.device
+        )
+        # Ensure kernel completion
+        wp.synchronize_device(self.sim_params.device)
 
-        data = np.zeros((height, width, 4), dtype=np.float32)
-
-        # Extract depth from bottom_surface
-        depth_here = -bottom_surface[:, :, 2]
-        depth_plus = np.roll(depth_here, -1, axis=0)
-        depth_minus = np.roll(depth_here, 1, axis=0)
-
-        d_dy = (depth_plus - depth_minus) / (2.0 * dy)
-        a = depth_here * d_dy / (6.0 * dy) - (Bcoef + 1.0 / 3.0) * depth_here**2 / (dy * dy)
-        b = 1.0 + 2.0 * (Bcoef + 1.0 / 3.0) * depth_here**2 / (dy * dy)
-        c = -depth_here * d_dy / (6.0 * dy) - (Bcoef + 1.0 / 3.0) * depth_here**2 / (dy * dy)
-
-        # Boundary conditions
-        b[:3, :] = 1.0
-        b[-3:, :] = 1.0
-        a[:3, :] = 0.0
-        a[-3:, :] = 0.0
-        c[:3, :] = 0.0
-        c[-3:, :] = 0.0
-
-        # Near dry conditions
-        mask = bottom_surface[:, :, 3] < 0
-        a[mask] = 0.0
-        b[mask] = 1.0
-        c[mask] = 0.0
-
-        data[:, :, 0] = a
-        data[:, :, 1] = b
-        data[:, :, 2] = c
-
-        return data
+    def generate_coefMaty(self):
+        """
+        Launch the tridiag_coeffs_Y kernel to fill coefMaty.
+        """
+        wp.launch(
+            kernel=tridiag_coeffs_Y,
+            dim=(self.sim_params.WIDTH, self.sim_params.HEIGHT),
+            inputs=[
+                self.warp_array_manager.Bottom,
+                self.warp_array_manager.coefMaty,
+                self.sim_params.dy,
+                self.sim_params.Bcoef,
+                self.sim_params.WIDTH,
+                self.sim_params.HEIGHT
+            ],
+            device=self.sim_params.device
+        )
+        # Ensure kernel completion
+        wp.synchronize_device(self.sim_params.device)

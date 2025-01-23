@@ -1,206 +1,423 @@
 import warp as wp
 import math
-from kernels.pass1_kernel import pass1_kernel
-from kernels.pass2_kernel import pass2_kernel
-from kernels.boundary_pass_kernel import boundary_pass_kernel
-from kernels.tridiag_pcrx_kernel import tridiag_pcrx_kernel
-from kernels.tridiag_pcry_kernel import tridiag_pcry_kernel
-from kernels.pass3_nlsw_kernel import pass3_nlsw_kernel
-from kernels.pass3_bous_kernel import pass3_bous_kernel
+from kernels.boundary_pass import Boundary_Pass
+from kernels.pass1 import Pass1
+from kernels.pass1_SedTrans import Pass1_SedTrans
+from kernels.pass2 import Pass2
+from kernels.tridiag_pcrx import TriDiag_PCRx
+from kernels.tridiag_pcry import TriDiag_PCRy
+from kernels.pass3_nlsw import Pass3_NLSW
+from kernels.pass3_SedTrans import Pass3_SedTrans
+from kernels.pass3_bous import Pass3_Bous
+from kernels.pass_breaking import Pass_Breaking
+from kernels.update_bottom import Update_Bottom
 
-# Helper function to launch boundary_pass kernel
-def launch_boundary_pass(wp_arr, sim_params, total_time, device="cuda"):
-    # Launch the BoundaryPass kernel
+def launch_boundary_pass(wp_arr, sim_params, time, txState, device="cuda"):
+    """
+    Launches the BoundaryPass kernel to handle boundary conditions.
+    """
     wp.launch(
-        kernel=boundary_pass_kernel,
-        dim=wp_arr.txBottom.shape,
+        kernel=Boundary_Pass,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
         inputs=[
-            wp_arr.current_stateUVstar, wp_arr.txBottom, wp_arr.txWaves, wp_arr.txtemp,
-            sim_params.WIDTH, sim_params.HEIGHT, sim_params.dt, sim_params.dx, sim_params.dy,
-            total_time, sim_params.reflect_x, sim_params.reflect_y,
-            math.pi, sim_params.BoundaryWidth, sim_params.seaLevel,
-            sim_params.boundary_nx, sim_params.boundary_ny, sim_params.numberOfWaves,
-            sim_params.west_boundary_type, sim_params.east_boundary_type,
-            sim_params.south_boundary_type, sim_params.north_boundary_type,
-            sim_params.boundary_g
+            txState,
+            wp_arr.Bottom,
+            wp_arr.Waves,
+            wp_arr.State_Sed,
+            wp_arr.NewState_Sed,
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT),
+            wp.float32(sim_params.dx),
+            wp.float32(sim_params.dy),
+            wp.float32(time),
+            wp.float32(sim_params.amplitude),
+            wp.float32(sim_params.g),
+            wp.int32(sim_params.reflect_x),
+            wp.int32(sim_params.reflect_y),
+            wp.int32(sim_params.BoundaryWidth),
+            wp.float32(sim_params.base_depth),
+            wp.int32(sim_params.boundary_nx),
+            wp.int32(sim_params.boundary_ny),
+            wp.int32(sim_params.numberOfWaves),
+            wp.int32(sim_params.west_boundary_type),
+            wp.int32(sim_params.east_boundary_type),
+            wp.int32(sim_params.south_boundary_type),
+            wp.int32(sim_params.north_boundary_type),
+            wp.int32(sim_params.incident_wave_type),
+            wp.float32(sim_params.nSL),
+            wp.float32(sim_params.sSL),
+            wp.float32(sim_params.eSL),
+            wp.float32(sim_params.wSL),
+            wp.float32(sim_params.boundary_g),
+            wp.float32(sim_params.delta),
+            wp.int32(sim_params.boundary_shift)
         ],
         device=device
     )
 
-    # Synchronize to ensure the BoundaryPass kernel execution is finished
     wp.synchronize()
+    
 
-    # Copy txNewState to txState
-    wp.copy(src=wp_arr.txtemp, dest=wp_arr.current_stateUVstar)
-
-    wp.synchronize()
-
-
-# Helper function to launch pass1 kernel
 def launch_pass1(wp_arr, sim_params, device="cuda"):
-    # Launch the Pass1 kernel
+
     wp.launch(
-        kernel=pass1_kernel,
-        dim=wp_arr.txBottom.shape,
+        kernel=Pass1,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
         inputs=[
-            wp_arr.txState, wp_arr.txBottom, wp_arr.txAuxiliary2,
-            wp_arr.txH, wp_arr.txU, wp_arr.txV, wp_arr.txNormal,
-            wp_arr.txAuxiliary2Out, wp_arr.txW, wp_arr.txC,
-            sim_params.WIDTH, sim_params.HEIGHT,
-            sim_params.one_over_dx, sim_params.one_over_dy,
-            sim_params.dissipation_threshold, sim_params.TWO_THETA,
-            sim_params.epsilon, sim_params.whiteWaterDecayRate,
-            sim_params.dt, sim_params.base_depth
+            wp_arr.State,
+            wp_arr.Bottom,
+            wp_arr.Hnear,
+            wp_arr.H,
+            wp_arr.U,
+            wp_arr.V,
+            wp_arr.C,
+            wp_arr.Auxiliary,
+            wp.float32(sim_params.TWO_THETA),
+            wp.float32(sim_params.epsilon),
+            wp.float32(sim_params.delta),
+            wp.float32(sim_params.double_dx),
+            wp.float32(sim_params.double_dy),
+            wp.float32(sim_params.base_depth),
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT)
         ],
         device=device
     )
 
-    # Synchronize to ensure the Pass1 kernel execution is finished
     wp.synchronize()
 
-    # Copy txAuxiliary2Out to txAuxiliary2
-    wp.copy(src=wp_arr.txAuxiliary2Out, dest=wp_arr.txAuxiliary2)
+
+def launch_pass1_sedtrans(wp_arr, sim_params, device="cuda"):
+
+    wp.launch(
+        kernel=Pass1_SedTrans,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
+        inputs=[
+            wp_arr.State_Sed,
+            wp_arr.Bottom,
+            wp_arr.H,
+            wp_arr.Sed_C,
+            wp.float32(sim_params.TWO_THETA),
+            wp.float32(sim_params.epsilon),
+            wp.float32(sim_params.base_depth),
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT)
+        ],
+        device=device
+    )
 
     wp.synchronize()
 
-# Helper function to launch pass2 kernel
+
 def launch_pass2(wp_arr, sim_params, device="cuda"):
-    # Launch the Pass2 kernel
+
     wp.launch(
-        kernel=pass2_kernel,
-        dim=wp_arr.txBottom.shape,
+        kernel=Pass2,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
         inputs=[
-            wp_arr.txH, wp_arr.txU, wp_arr.txV, wp_arr.txBottom, wp_arr.txC,
-            wp_arr.txXFlux, wp_arr.txYFlux,
-            sim_params.WIDTH, sim_params.HEIGHT,
-            sim_params.g, sim_params.half_g, sim_params.dx, sim_params.dy
+            wp_arr.Hnear,
+            wp_arr.H,
+            wp_arr.U,
+            wp_arr.V,
+            wp_arr.C,
+            wp_arr.Bottom,
+            wp_arr.Sed_C,
+            wp_arr.XFlux,
+            wp_arr.YFlux,
+            wp_arr.XFlux_Sed,
+            wp_arr.YFlux_Sed,
+            wp.float32(sim_params.g),
+            wp.float32(sim_params.delta),
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT),
+            wp.bool(sim_params.useSedTransModel)
         ],
         device=device
     )
-
-    # Synchronize to ensure the Pass2 kernel execution is finished
+    
     wp.synchronize()
 
 
-# Helper function to launch tridiag_pcrx kernel
-def launch_tridiag_pcrx(wp_arr, sim_params, device="cuda"):
-    wp.copy(src=wp_arr.coefMatx, dest=wp_arr.testx)
+def launch_Tridiag(
+    wp_arr,
+    sim_params,
+    device="cuda"
+):
+
     if sim_params.NLSW_or_Bous == 0:
-        wp.copy(src=wp_arr.current_stateUVstar, dest=wp_arr.txNewState)
+        # Directly copy current_stateUVstar to NewState
+        wp.copy(src=wp_arr.current_stateUVstar, dest=wp_arr.NewState)
     else:
+        # TriDiag_PCRx
+        current_buffer_x = wp_arr.temp_PCRx1
+        next_buffer_x = wp_arr.temp_PCRx2
+
         for p in range(sim_params.Px):
-            s = 1 << p  # Bit shift to calculate s as 2^p
+            s = 1 << p
 
-            # Launch the TriDiag_PCRx kernel
+            # Launch TriDiag_PCRx kernel
             wp.launch(
-                kernel=tridiag_pcrx_kernel,
-                dim=wp_arr.txBottom.shape,
+                kernel=TriDiag_PCRx,
+                dim=(sim_params.WIDTH, sim_params.HEIGHT),
                 inputs=[
-                    wp_arr.coefMatx, wp_arr.txNewState, wp_arr.current_stateUVstar,
-                    wp_arr.txtemp, wp_arr.txtemp2,
-                    sim_params.WIDTH, sim_params.HEIGHT, p, s
+                    wp_arr.coefMatx,
+                    wp_arr.current_stateUVstar,
+                    current_buffer_x,
+                    next_buffer_x,
+                    wp_arr.temp2_PCRx,
+                    wp_arr.NewState,
+                    wp.int32(p),
+                    wp.int32(s),
+                    wp.int32(sim_params.WIDTH),
+                    wp.int32(sim_params.HEIGHT)
                 ],
                 device=device
             )
 
-            # Synchronize to ensure the TriDiag_PCRx kernel execution is finished
             wp.synchronize()
 
-            # Copy new textures to old ones only if the loop counter is less than Px - 1
-            if p < sim_params.Px - 1:
-                wp.copy(src=wp_arr.txtemp, dest=wp_arr.newcoef)
-                wp.copy(src=wp_arr.newcoef, dest=wp_arr.coefMatx)
+            # Swap buffers: next_buffer becomes current_buffer for next pass
+            current_buffer_x, next_buffer_x = next_buffer_x, current_buffer_x
 
-        # After all the iterations, copy the new state into the current state
-        wp.copy(src=wp_arr.txtemp2, dest=wp_arr.txNewState)
+        wp.copy(src=wp_arr.temp2_PCRx, dest=wp_arr.NewState)
 
-    wp.synchronize()
+        # TriDiag_PCRy
+        current_buffer_y = wp_arr.temp_PCRy1
+        next_buffer_y = wp_arr.temp_PCRy2
 
-    wp.copy(src=wp_arr.testx, dest=wp_arr.coefMatx)
-
-
-# Helper function to launch tridiag_pcry kernel
-def launch_tridiag_pcry(wp_arr, sim_params, device="cuda"):
-    wp.copy(src=wp_arr.coefMaty, dest=wp_arr.testy)
-    if sim_params.NLSW_or_Bous == 0:
-        wp.copy(src=wp_arr.current_stateUVstar, dest=wp_arr.txNewState)
-    else:
         for p in range(sim_params.Py):
-            s = 1 << p  # Bit shift to calculate s as 2^p
+            s = 1 << p
 
-            # Launch the TriDiag_PCRy kernel
+            # Launch TriDiag_PCRy kernel
             wp.launch(
-                kernel=tridiag_pcry_kernel,
-                dim=wp_arr.txBottom.shape,
+                kernel=TriDiag_PCRy,
+                dim=(sim_params.WIDTH, sim_params.HEIGHT),
                 inputs=[
-                    wp_arr.coefMaty, wp_arr.txNewState, wp_arr.current_stateUVstar,
-                    wp_arr.txtemp, wp_arr.txtemp2,
-                    sim_params.WIDTH, sim_params.HEIGHT, p, s
+                    wp_arr.coefMaty,
+                    wp_arr.current_stateUVstar,
+                    current_buffer_y,
+                    next_buffer_y,
+                    wp_arr.temp2_PCRy,
+                    wp_arr.NewState,
+                    wp.int32(p),
+                    wp.int32(s),
+                    wp.int32(sim_params.WIDTH),
+                    wp.int32(sim_params.HEIGHT)
                 ],
                 device=device
             )
 
-            # Synchronize to ensure the TriDiag_PCRy kernel execution is finished
             wp.synchronize()
 
-            # Copy new textures to old ones only if the loop counter is less than Py - 1
-            if p < sim_params.Py - 1:
-                wp.copy(src=wp_arr.txtemp, dest=wp_arr.newcoef)
-                wp.copy(src=wp_arr.newcoef, dest=wp_arr.coefMaty)
+            # Swap buffers: next_buffer becomes current_buffer for next pass
+            current_buffer_y, next_buffer_y = next_buffer_y, current_buffer_y
 
-        # After all the iterations, copy the new state into the current state
-        wp.copy(src=wp_arr.txtemp2, dest=wp_arr.txNewState)
+        wp.copy(src=wp_arr.temp2_PCRy, dest=wp_arr.NewState)
 
     wp.synchronize()
 
-    wp.copy(src=wp_arr.testy, dest=wp_arr.coefMaty)
 
+def launch_pass3_nlsw(wp_arr, sim_params, pred_or_corrector, device="cuda"):
 
-# Helper function to launch pass3_nlsw kernel
-def launch_pass3_nlsw(wp_arr, sim_params, device="cuda"):
-    # Launch the Pass3_NLSW kernel
     wp.launch(
-        kernel=pass3_nlsw_kernel,
-        dim=wp_arr.txBottom.shape,
+        kernel=Pass3_NLSW,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
         inputs=[
-            wp_arr.txState, wp_arr.txBottom, wp_arr.txH, wp_arr.txXFlux, wp_arr.txYFlux,
-            wp_arr.oldGradients, wp_arr.oldOldGradients, wp_arr.predictedGradients, wp_arr.F_G_star_oldOldGradients,
-            wp_arr.txstateUVstar, wp_arr.txShipPressure, wp_arr.txNewState, wp_arr.dU_by_dt, wp_arr.F_G_star, wp_arr.current_stateUVstar,
-            sim_params.WIDTH, sim_params.HEIGHT, sim_params.dt, sim_params.dx, sim_params.dy, sim_params.one_over_dx, sim_params.one_over_dy,
-            sim_params.g_over_dx, sim_params.g_over_dy, sim_params.timeScheme, sim_params.epsilon, sim_params.isManning, sim_params.g, sim_params.friction,
-            sim_params.pred_or_corrector, sim_params.Bcoef, sim_params.Bcoef_g, sim_params.one_over_d2x, sim_params.one_over_d3x, sim_params.one_over_d2y,
-            sim_params.one_over_d3y, sim_params.one_over_dxdy, sim_params.seaLevel
+            wp_arr.NewState,
+            wp_arr.State,
+            wp_arr.stateUVstar,
+            wp_arr.Bottom,
+            wp_arr.BottomFriction,
+            wp_arr.ShipPressure,
+            wp_arr.ContSource,
+            wp_arr.Breaking,
+            wp_arr.XFlux,
+            wp_arr.YFlux,
+            wp_arr.oldGradients,
+            wp_arr.oldOldGradients,
+            wp_arr.predictedGradients,
+            wp_arr.dU_by_dt,
+            wp_arr.predictedF_G_star,
+            wp_arr.current_stateUVstar,
+            wp.int32(sim_params.timeScheme),
+            wp.int32(pred_or_corrector),
+            wp.bool(sim_params.useBreakingModel),
+            wp.int32(sim_params.showBreaking),
+            wp.float32(sim_params.g),
+            wp.float32(sim_params.dt),
+            wp.float32(sim_params.one_over_dx),
+            wp.float32(sim_params.one_over_dy),
+            wp.float32(sim_params.one_over_d2x),
+            wp.float32(sim_params.one_over_d2y),
+            wp.float32(sim_params.one_over_dxdy),
+            wp.float32(sim_params.g_over_dx),
+            wp.float32(sim_params.g_over_dy),
+            wp.float32(sim_params.delta),
+            wp.int32(sim_params.isManning),
+            wp.float32(sim_params.friction),
+            wp.float32(sim_params.base_depth),
+            wp.float32(sim_params.whiteWaterDispersion),
+            wp.float32(sim_params.whiteWaterDecayRate),
+            wp.float32(sim_params.infiltrationRate),
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT)
         ],
         device=device
     )
-    wp.synchronize()
-
-    # Copy dU_by_dt to predictedGradients after kernel execution
-    wp.copy(src=wp_arr.dU_by_dt, dest=wp_arr.predictedGradients)
 
     wp.synchronize()
 
 
-# Helper function to launch pass3_bous kernel
-def launch_pass3_bous(wp_arr, sim_params, device="cuda"):
-    # Launch the Pass3_Bous kernel
+def launch_pass3_sedtrans(wp_arr, sim_params, pred_or_corrector, device="cuda"):
+
     wp.launch(
-        kernel=pass3_bous_kernel,
-        dim=wp_arr.txBottom.shape,
+        kernel=Pass3_SedTrans,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
         inputs=[
-            wp_arr.txState, wp_arr.txBottom, wp_arr.txH, wp_arr.txXFlux, wp_arr.txYFlux,
-            wp_arr.oldGradients, wp_arr.oldOldGradients, wp_arr.predictedGradients, wp_arr.F_G_star_oldOldGradients,
-            wp_arr.txstateUVstar, wp_arr.txShipPressure, wp_arr.txNewState, wp_arr.dU_by_dt, wp_arr.F_G_star, wp_arr.current_stateUVstar,
-            sim_params.WIDTH, sim_params.HEIGHT, sim_params.dt, sim_params.dx, sim_params.dy, sim_params.one_over_dx, sim_params.one_over_dy,
-            sim_params.g_over_dx, sim_params.g_over_dy, sim_params.timeScheme, sim_params.epsilon, sim_params.isManning, sim_params.g, sim_params.friction,
-            sim_params.pred_or_corrector, sim_params.Bcoef, sim_params.Bcoef_g, sim_params.one_over_d2x, sim_params.one_over_d3x, sim_params.one_over_d2y,
-            sim_params.one_over_d3y, sim_params.one_over_dxdy, sim_params.seaLevel
+            wp_arr.NewState_Sed,
+            wp_arr.dU_by_dt_Sed,
+            wp_arr.erosion_Sed,
+            wp_arr.deposition_Sed,
+            wp_arr.State_Sed,
+            wp_arr.State,
+            wp_arr.Bottom,
+            wp_arr.XFlux_Sed,
+            wp_arr.YFlux_Sed,
+            wp_arr.oldGradients_Sed,
+            wp_arr.oldOldGradients_Sed,
+            wp_arr.predictedGradients_Sed,
+            wp.int32(sim_params.timeScheme),
+            wp.float32(sim_params.g),
+            wp.float32(sim_params.dt),
+            wp.float32(sim_params.one_over_dx),
+            wp.float32(sim_params.one_over_dy),
+            wp.float32(sim_params.one_over_d2x),
+            wp.float32(sim_params.one_over_d2y),
+            wp.float32(sim_params.one_over_dxdy),
+            wp.float32(sim_params.epsilon),
+            wp.int32(sim_params.isManning),
+            wp.float32(sim_params.friction),
+            wp.int32(pred_or_corrector),
+            wp.float32(sim_params.sedC1_shields),
+            wp.float32(sim_params.sedC1_criticalshields),
+            wp.float32(sim_params.sedC1_erosion),
+            wp.float32(sim_params.sedC1_fallvel),
+            wp.float32(sim_params.sedC1_n),
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT)
         ],
         device=device
     )
+
     wp.synchronize()
 
-    # Copy dU_by_dt to predictedGradients after kernel execution
-    wp.copy(src=wp_arr.dU_by_dt, dest=wp_arr.predictedGradients)
 
+def launch_pass3_bous(wp_arr, sim_params, pred_or_corrector, device="cuda"):
+
+    wp.launch(
+        kernel=Pass3_Bous,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
+        inputs=[
+            wp_arr.NewState,
+            wp_arr.dU_by_dt,
+            wp_arr.predictedF_G_star,
+            wp_arr.current_stateUVstar,
+            wp_arr.State,
+            wp_arr.stateUVstar,
+            wp_arr.Bottom,
+            wp_arr.BottomFriction,
+            wp_arr.XFlux,
+            wp_arr.YFlux,
+            wp_arr.F_G_star_oldOldGradients,
+            wp_arr.oldGradients,
+            wp_arr.oldOldGradients,
+            wp_arr.predictedGradients,
+            wp_arr.ShipPressure,
+            wp_arr.ContSource,
+            wp_arr.Breaking,
+            wp_arr.DissipationFlux,
+            wp.int32(sim_params.timeScheme),
+            wp.int32(pred_or_corrector),
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT),
+            wp.float32(sim_params.dt),
+            wp.float32(sim_params.one_over_dx),
+            wp.float32(sim_params.one_over_dy),
+            wp.float32(sim_params.g_over_dx),
+            wp.float32(sim_params.g_over_dy),
+            wp.float32(sim_params.one_over_d2x),
+            wp.float32(sim_params.one_over_d3x),
+            wp.float32(sim_params.one_over_d2y),
+            wp.float32(sim_params.one_over_d3y),
+            wp.float32(sim_params.one_over_dxdy),
+            wp.float32(sim_params.Bcoef),
+            wp.float32(sim_params.Bcoef_g),
+            wp.float32(sim_params.delta),
+            wp.float32(sim_params.base_depth),
+            wp.float32(sim_params.whiteWaterDispersion),
+            wp.float32(sim_params.whiteWaterDecayRate),
+            wp.bool(sim_params.useBreakingModel),
+            wp.int32(sim_params.showBreaking),
+            wp.float32(sim_params.g),
+            wp.int32(sim_params.isManning),
+            wp.float32(sim_params.friction),
+            wp.float32(sim_params.infiltrationRate)
+        ],
+        device=device
+    )
+    
+    wp.synchronize()
+
+
+def launch_pass_breaking(wp_arr, sim_params, time, device="cuda"):
+
+    wp.launch(
+        kernel=Pass_Breaking,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
+        inputs=[
+            wp_arr.State,
+            wp_arr.XFlux,
+            wp_arr.YFlux,
+            wp_arr.Breaking,
+            wp_arr.DissipationFlux,
+            wp_arr.Bottom,
+            wp_arr.dU_by_dt,
+            wp.float32(time),
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT),
+            wp.float32(sim_params.dt),
+            wp.float32(sim_params.dx),
+            wp.float32(sim_params.dy),
+            wp.float32(sim_params.one_over_dx),
+            wp.float32(sim_params.one_over_dy),
+            wp.float32(sim_params.T_star_coef),
+            wp.float32(sim_params.dzdt_I_coef),
+            wp.float32(sim_params.dzdt_F_coef),
+            wp.float32(sim_params.delta_breaking),
+            wp.float32(sim_params.g),
+            wp.float32(sim_params.epsilon)
+        ],
+        device=device
+    )
+    
+    wp.synchronize()
+
+
+def launch_Update_Bottom(wp_arr, sim_params, device="cuda"):
+
+    wp.launch(
+        kernel=Update_Bottom,
+        dim=(sim_params.WIDTH, sim_params.HEIGHT),
+        inputs=[
+            wp_arr.Bottom,
+            wp_arr.erosion_Sed,
+            wp_arr.deposition_Sed,
+            wp.float32(sim_params.dt),
+            wp.float32(sim_params.sedC1_n),
+            wp.int32(sim_params.WIDTH),
+            wp.int32(sim_params.HEIGHT)
+        ],
+        device=device
+    )
+    
     wp.synchronize()

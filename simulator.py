@@ -1,155 +1,284 @@
+import os
 import warp as wp
-from datetime import datetime
-from simulation_parameters import SimulationParameters
-from ship_properties import ShipProperties
+import numpy as np
+import time
+
+from my_renderer import OpenGLRenderer  # Custom renderer from Warp opengl renderer
+
+from utils.simulation_parameters import SimulationParameters
 from utils.parameters_loader import ParametersLoader
-from utils.constants_calculator import ConstantsCalculator
-from utils.depth_surface_generator import DepthSurfaceGenerator
-from utils.initial_ocean_elevation_generator import InitialOceanElevationGenerator
+from utils.parameter_calculator import ParameterCalculator
 from utils.wave_loader import WaveLoader
-from utils.tridiag_coef_generator import TridiagCoefGenerator
+from utils.topo_process import TopoProcess
 from utils.warp_array_manager import WarpArrayManager
+from utils.tridiag_coef_generator import TridiagCoefGenerator
 from kernels.kernel_launchers import (
-    launch_boundary_pass, launch_pass1, launch_pass2, 
-    launch_tridiag_pcrx, launch_tridiag_pcry, 
-    launch_pass3_nlsw, launch_pass3_bous
+    launch_boundary_pass,
+    launch_pass1,
+    launch_pass1_sedtrans,
+    launch_pass2,
+    launch_Tridiag,
+    launch_pass3_nlsw,
+    launch_pass3_bous,
+    launch_pass3_sedtrans,
+    launch_pass_breaking,
+    launch_Update_Bottom
 )
 
 # Initialize Warp
 wp.init()
 
-# Initialize simulation parameters and ship properties
-sim_params = SimulationParameters()
-ship_properties = ShipProperties()
+class Simulator:
+    def __init__(self, example_name='Crescent_City', device='cuda'):
+        """
+        Initializes the Simulator by loading parameters, generating data,
+        and initializing Warp arrays.
+        """
+        self.device = device
+        self.example_name = example_name
+        self.example_path = os.path.join('examples', self.example_name)
 
-# Load parameters from JSON
-params_loader = ParametersLoader()
-params_loader.load_parameters(sim_params, 'data/config.json')
+        # Verify example directory
+        if not os.path.isdir(self.example_path):
+            raise FileNotFoundError(f"Example directory '{self.example_path}' does not exist.")
 
-# Calculate constants
-const_calculator = ConstantsCalculator()
-const_calculator.calculate_constants(sim_params)
+        # Initialize simulation parameters
+        self.sim_params = SimulationParameters()
+        self.params_loader = ParametersLoader()
 
-# Generate depth data
-depth_surface_generator = DepthSurfaceGenerator()
-depth_data = depth_surface_generator.generate_depth_surface(sim_params, 'data/bathy.txt')
+        # Path to config.json
+        config_path = os.path.join(self.example_path, 'config.json')
+        if not os.path.isfile(config_path):
+            raise FileNotFoundError(f"Configuration file '{config_path}' not found.")
+        self.params_loader.load_parameters(self.sim_params, config_path)
 
-# Generate initial ocean elevation data
-initial_ocean_elevation_generator = InitialOceanElevationGenerator()
-initial_ocean_elevation_data = initial_ocean_elevation_generator.generate_initial_ocean_elevation(sim_params, depth_data)
+        # Calculate derived parameters
+        self.calculator = ParameterCalculator()
+        self.calculator.calculate_parameters(self.sim_params)
 
-# Load wave data
-wave_loader = WaveLoader()
-wave_loader.load_irr_waves(sim_params, 'data/waves.txt', 0)
+        # Load wave data
+        self.wave_loader = WaveLoader()
+        wave_file_path = os.path.join(self.example_path, 'waves.txt')
+        if not os.path.isfile(wave_file_path):
+            raise FileNotFoundError(f"Waves file '{wave_file_path}' not found.")
+        self.wave_loader.load_waves(self.sim_params, wave_file_path)
 
-# Generate tridiagonal matrices
-tridiag_coef_generator = TridiagCoefGenerator()
-tridiag_coef_x_data = tridiag_coef_generator.generate_tridiag_coef_x(sim_params, depth_data)
-tridiag_coef_y_data = tridiag_coef_generator.generate_tridiag_coef_y(sim_params, depth_data)
+        # Initialize Warp arrays
+        self.warp_array_manager = WarpArrayManager(self.sim_params)
 
-# Initialize Warp arrays
-wp_arr = WarpArrayManager()
-wp_arr.initialize_wp_arrays(sim_params, depth_data, initial_ocean_elevation_data, tridiag_coef_x_data, tridiag_coef_y_data)
+        # Initialize TopoProcess to fill the Bottom array
+        bathy_file_path = os.path.join(self.example_path, 'bathy.txt')
+        if not os.path.isfile(bathy_file_path):
+            raise FileNotFoundError(f"Bathymetry file '{bathy_file_path}' not found.")
+        self.topo = TopoProcess(
+            filename='bathy.txt',
+            datatype='celeris',
+            path=self.example_path,
+            sim_params=self.sim_params,
+            array_manager=self.warp_array_manager
+        )
 
-total_time: float = 0.0
-frame_count: int = 0
-start_time = None
+        # Generate tridiagonal coefficients
+        self.tridiag_coef_generator = TridiagCoefGenerator(self.sim_params, self.warp_array_manager)
+        self.tridiag_coef_generator.generate_coefMatx()
+        self.tridiag_coef_generator.generate_coefMaty()
 
-# Main simulation loop
-def run_simulation(wp_arr, sim_params, total_steps):
-    global frame_count, total_time, start_time
+        # Create a renderer instance
+        self.renderer = OpenGLRenderer(
+            sim_params=self.sim_params,
+            title="Celeris Wave Simulation",
+            screen_width=1280,
+            screen_height=720,
+            enable_mouse_interaction=True,
+            enable_keyboard_interaction=True,
+            device=device
+        )
 
-    start_time = datetime.now()  # Start wall clock timer
+        # Render a plane for the waves
+        self.renderer.render_plane(
+            name="wave_plane",
+            pos=(0.0, 0.0, 0.0),
+            rot=(0.0, 0.0, 0.0, 1.0),
+            width=self.sim_params.WIDTH / 100.0,
+            length=self.sim_params.HEIGHT / 100.0,
+            color=(1.0, 1.0, 1.0),
+            color2=None,
+            is_template=False
+        )
 
-    for step in range(total_steps):
-        frame_count += 1  # Frame or time step counter
-        total_time = frame_count * sim_params.dt  # Simulation time
+    def evolve_step(self, step):
+        """
+        Performs a single simulation step
+        """
+        # Pass1
+        launch_pass1(self.warp_array_manager, self.sim_params, device=self.device)
 
-        # Call boundary pass first
-        launch_boundary_pass(wp_arr, sim_params, total_time)
+        # Pass1_sedtrans if enabled
+        if self.sim_params.useSedTransModel:
+            launch_pass1_sedtrans(self.warp_array_manager, self.sim_params, device=self.device)
 
-        # !!PREDICTOR!!
+        # Pass2
+        launch_pass2(self.warp_array_manager, self.sim_params, device=self.device)
 
-        # Execute Pass1
-        launch_pass1(wp_arr, sim_params)
+        # Breaking if enabled
+        if self.sim_params.useBreakingModel:
+            launch_pass_breaking(
+                self.warp_array_manager,
+                self.sim_params,
+                time=self.sim_params.dt * step - self.sim_params.dt,
+                device=self.device
+            )
 
-        # Execute Pass2
-        launch_pass2(wp_arr, sim_params)
+        # Pass3
+        if self.sim_params.NLSW_or_Bous == 0:
+            launch_pass3_nlsw(self.warp_array_manager, self.sim_params, pred_or_corrector=1, device=self.device)
+        else:
+            launch_pass3_bous(self.warp_array_manager, self.sim_params, pred_or_corrector=1, device=self.device)
 
-        # Pass3's
-        sim_params.pred_or_corrector = 1  # This is used inside PassX to determine the proper State update equation to use
-        if sim_params.NLSW_or_Bous == 0:  # NLSW
-            launch_pass3_nlsw(wp_arr, sim_params)
-        elif sim_params.NLSW_or_Bous == 1:  # Bous
-            launch_pass3_bous(wp_arr, sim_params)
+        wp.copy(src=self.warp_array_manager.dU_by_dt, dest=self.warp_array_manager.predictedGradients)
 
-        # Execute BoundaryPass
-        launch_boundary_pass(wp_arr, sim_params, total_time)
+        # SedTrans pass3 if used
+        if self.sim_params.useSedTransModel:
+            launch_pass3_sedtrans(self.warp_array_manager, self.sim_params, pred_or_corrector=1, device=self.device)
+            wp.copy(src=self.warp_array_manager.dU_by_dt_Sed, dest=self.warp_array_manager.predictedGradients_Sed)
 
-        # Execute TriDiag_PCRx
-        launch_tridiag_pcrx(wp_arr, sim_params)
+        # Boundary pass
+        launch_boundary_pass(
+            self.warp_array_manager,
+            self.sim_params,
+            time=self.sim_params.dt * step,
+            txState=self.warp_array_manager.current_stateUVstar,
+            device=self.device
+        )
 
-        # Execute TriDiag_PCRy
-        launch_tridiag_pcry(wp_arr, sim_params)
+        # Tridiag
+        launch_Tridiag(self.warp_array_manager, self.sim_params, device=self.device)
 
-        # !!END PREDICTOR!!
+        # Additional boundary pass if not NLSW
+        if self.sim_params.NLSW_or_Bous != 0:
+            launch_boundary_pass(
+                self.warp_array_manager,
+                self.sim_params,
+                time=self.sim_params.dt * step,
+                txState=self.warp_array_manager.NewState,
+                device=self.device
+            )
 
-        # Step back values of F* and G*
-        wp.copy(src=wp_arr.F_G_star_oldGradients, dest=wp_arr.F_G_star_oldOldGradients)
-        wp.copy(src=wp_arr.F_G_star, dest=wp_arr.F_G_star_oldGradients)
+        # If Boussinesq
+        if self.sim_params.NLSW_or_Bous == 1:
+            wp.copy(src=self.warp_array_manager.F_G_star_oldGradients,    dest=self.warp_array_manager.F_G_star_oldOldGradients)
+            wp.copy(src=self.warp_array_manager.predictedF_G_star,        dest=self.warp_array_manager.F_G_star_oldGradients)
 
-        # !!CORRECTOR!!
-        if sim_params.timeScheme == 2:  # Only called when using Predictor+Corrector method
-            sim_params.pred_or_corrector = 2
+        # If timeScheme=2, do predictor/corrector
+        if self.sim_params.timeScheme == 2:
+            wp.copy(src=self.warp_array_manager.NewState, dest=self.warp_array_manager.State)
 
-            # Copy txState into txState_pred for the corrector equation
-            wp.copy(src=wp_arr.txstateUVstar, dest=wp_arr.txStateUVstar_pred)
-            wp.copy(src=wp_arr.txNewState, dest=wp_arr.txState)
+            if self.sim_params.useSedTransModel:
+                wp.copy(src=self.warp_array_manager.NewState_Sed, dest=self.warp_array_manager.State_Sed)
 
-            # Execute Pass1
-            launch_pass1(wp_arr, sim_params)
+            # Pass1
+            launch_pass1(self.warp_array_manager, self.sim_params, device=self.device)
+            if self.sim_params.useSedTransModel:
+                launch_pass1_sedtrans(self.warp_array_manager, self.sim_params, device=self.device)
 
-            # Execute Pass2
-            launch_pass2(wp_arr, sim_params)
+            # Pass2
+            launch_pass2(self.warp_array_manager, self.sim_params, device=self.device)
 
-            if sim_params.NLSW_or_Bous == 0:  # NLSW
-                launch_pass3_nlsw(wp_arr, sim_params)
-            elif sim_params.NLSW_or_Bous == 1:  # Bous
-                launch_pass3_bous(wp_arr, sim_params)
+            # Breaking if needed
+            if self.sim_params.useBreakingModel:
+                launch_pass_breaking(
+                    self.warp_array_manager,
+                    self.sim_params,
+                    time=self.sim_params.dt * step,
+                    device=self.device
+                )
 
-            # Execute BoundaryPass
-            launch_boundary_pass(wp_arr, sim_params, total_time)
+            # Pass3
+            if self.sim_params.NLSW_or_Bous == 0:
+                launch_pass3_nlsw(self.warp_array_manager, self.sim_params, pred_or_corrector=2, device=self.device)
+            else:
+                launch_pass3_bous(self.warp_array_manager, self.sim_params, pred_or_corrector=2, device=self.device)
 
-            # Execute TriDiag_PCRx
-            launch_tridiag_pcrx(wp_arr, sim_params)
+            if self.sim_params.useSedTransModel:
+                launch_pass3_sedtrans(self.warp_array_manager, self.sim_params, pred_or_corrector=2, device=self.device)
 
-            # Execute TriDiag_PCRy
-            launch_tridiag_pcry(wp_arr, sim_params)
-        # !!END CORRECTOR!!
+            # Boundary pass
+            launch_boundary_pass(
+                self.warp_array_manager,
+                self.sim_params,
+                time=self.sim_params.dt * step,
+                txState=self.warp_array_manager.current_stateUVstar,
+                device=self.device
+            )
 
-        # Shift gradient textures
-        wp.copy(src=wp_arr.oldGradients, dest=wp_arr.oldOldGradients)
-        wp.copy(src=wp_arr.predictedGradients, dest=wp_arr.oldGradients)
+            # Tridiag
+            launch_Tridiag(self.warp_array_manager, self.sim_params, device=self.device)
 
-        # Copy future_ocean_texture back to ocean_texture
-        wp.copy(src=wp_arr.txNewState, dest=wp_arr.txState)
-        wp.copy(src=wp_arr.current_stateUVstar, dest=wp_arr.txstateUVstar)
+            if self.sim_params.NLSW_or_Bous != 0:
+                launch_boundary_pass(
+                    self.warp_array_manager,
+                    self.sim_params,
+                    time=self.sim_params.dt * step,
+                    txState=self.warp_array_manager.NewState,
+                    device=self.device
+                )
 
-        # Calculate and log the simulation speed
-        elapsed_real_time = (datetime.now() - start_time).total_seconds()
-        sim_speed = total_time / elapsed_real_time if elapsed_real_time > 0 else 0
-        # print(f"Iteration {frame_count}: Simulated Time = {total_time:.2f} s, Real Time = {elapsed_real_time:.2f} s, Speed = {sim_speed:.2f}x real time")
+            if self.sim_params.useSedTransModel:
+                launch_Update_Bottom(self.warp_array_manager, self.sim_params, device=self.device)
 
-        # # For debugging, print the shape and first element of txState Warp array
-        # print(frame_count)
-        print(wp_arr.txState.numpy()[1000, 500])
+                if self.sim_params.NLSW_or_Bous == 1:
+                    self.topo.fill_bottom_field()
+                    self.tridiag_coef_generator.generate_coefMatx()
+                    self.tridiag_coef_generator.generate_coefMaty()
 
-# Define the total number of steps for the simulation
-total_steps = 1000  # Example: 1000 time steps
+        wp.copy(src=self.warp_array_manager.oldGradients,    dest=self.warp_array_manager.oldOldGradients)
+        wp.copy(src=self.warp_array_manager.predictedGradients, dest=self.warp_array_manager.oldGradients)
 
-# Run the simulation
-run_simulation(wp_arr, sim_params, total_steps)
+        wp.copy(src=self.warp_array_manager.NewState, dest=self.warp_array_manager.State)
+        wp.copy(src=self.warp_array_manager.current_stateUVstar, dest=self.warp_array_manager.stateUVstar)
+
+        if self.sim_params.useSedTransModel:
+            wp.copy(src=self.warp_array_manager.oldGradients_Sed,    dest=self.warp_array_manager.oldOldGradients_Sed)
+            wp.copy(src=self.warp_array_manager.predictedGradients_Sed, dest=self.warp_array_manager.oldGradients_Sed)
+            wp.copy(src=self.warp_array_manager.NewState_Sed,       dest=self.warp_array_manager.State_Sed)
 
 
-# print(wp_arr.coefMatx.numpy()[0, 500])
-# print(wp_arr.coefMaty.numpy()[0, 500])
+    def run_simulation(self, total_steps=1000, log_interval=100):
+        """
+        Runs the simulation for number of steps
+        """
+        start_time = time.time()
+
+        for step in range(total_steps):
+            if not self.renderer.is_running():
+                # Stop simulation if closed the window
+                break
+                
+            self.evolve_step(step)
+
+            # After each evolve_step, update textures and render
+            self.renderer.update_wave_texture(
+                wave_array=self.warp_array_manager.State,
+                width=self.sim_params.WIDTH,
+                height=self.sim_params.HEIGHT
+            )
+
+            # Time uniform for the fragment shader
+            current_time = self.sim_params.dt * step
+            self.renderer.set_time(current_time)
+
+            # Draw one frame
+            self.renderer.begin_frame(current_time)
+            self.renderer.end_frame()
+            self.renderer.update()
+
+            if step == 0 or ((step + 1) % log_interval) == 0:
+                elapsed = time.time() - start_time
+                print(f"Step {step + 1}/{total_steps} completed in {elapsed:.2f} seconds.")
+                # Save state if outdir is specified
+                if self.sim_params.outdir:
+                    state = self.warp_array_manager.State.numpy()
+                    os.makedirs(self.sim_params.outdir, exist_ok=True)
+                    np.save(f"{self.sim_params.outdir}/state_{step}.npy", state)
+
+        self.renderer.close()

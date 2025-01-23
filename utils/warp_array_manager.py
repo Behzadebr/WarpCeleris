@@ -1,50 +1,70 @@
-import numpy as np
 import warp as wp
 
 class WarpArrayManager:
-    def __init__(self):
-        pass
+    def __init__(self, sim_params):
+        """
+        Initialize all Warp arrays.
+        
+        """
+        # Initialize Warp
+        wp.init()
 
-    def create_warp_array(self, data, dtype):
-        if not isinstance(data, np.ndarray):
-            raise ValueError("Data must be a numpy array")
-        return wp.array2d(data, dtype=dtype, device="cuda")
+        device = sim_params.device
 
-    def initialize_wp_arrays(self, sim_params, depth_data, initial_ocean_elevation_data, tridiag_coef_x_data, tridiag_coef_y_data):
-        self.txBottom = self.create_warp_array(depth_data, wp.vec4)
-        self.txState = self.create_warp_array(initial_ocean_elevation_data, wp.vec4)
-        self.txNewState = self.create_warp_array(initial_ocean_elevation_data, wp.vec4)
-        self.txstateUVstar = self.create_warp_array(initial_ocean_elevation_data, wp.vec4)
-        self.txstateFGstar = self.create_warp_array(initial_ocean_elevation_data, wp.vec4)
-        self.current_stateUVstar = self.create_warp_array(initial_ocean_elevation_data, wp.vec4)
-        self.current_stateFGstar = self.create_warp_array(initial_ocean_elevation_data, wp.vec4)
-        self.txStateUVstar_pred = self.create_warp_array(initial_ocean_elevation_data, wp.vec4)
-        self.txWaves = self.create_warp_array(sim_params.waveVectors, wp.vec4)
+        wp.set_device(device)
 
-        zeros_shape = depth_data.shape
-        self.txH = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txU = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txV = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txW = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txC = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txXFlux = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txYFlux = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.oldGradients = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.oldOldGradients = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.predictedGradients = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.F_G_star_oldGradients = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.F_G_star_oldOldGradients = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.F_G_star_predictedGradients = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txNormal = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txAuxiliary2 = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txAuxiliary2Out = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txtemp = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txtemp2 = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.dU_by_dt = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.F_G_star = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.txShipPressure = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.coefMatx = self.create_warp_array(tridiag_coef_x_data, wp.vec4)
-        self.coefMaty = self.create_warp_array(tridiag_coef_y_data, wp.vec4)
-        self.newcoef = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.testx = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
-        self.testy = self.create_warp_array(np.zeros(zeros_shape, dtype=np.float32), wp.vec4)
+        self.Bottom = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.State = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.NewState = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.BottomFriction = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.stateUVstar = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.current_stateUVstar = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.stateFGstar = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.current_stateFGstar = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.Waves = wp.array2d(sim_params.waveVectors, dtype=wp.vec4, device=device)
+        
+        self.Hnear = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.H = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.U = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.V = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.C = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        
+        self.XFlux = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.YFlux = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.oldGradients = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.oldOldGradients = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.predictedGradients = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.dU_by_dt = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        
+        self.predictedF_G_star = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.F_G_star_oldGradients = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.F_G_star_oldOldGradients = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        
+        self.coefMatx = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.coefMaty = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.temp_PCRx1 = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.temp_PCRy1 = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.temp_PCRx2 = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.temp_PCRy2 = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.temp2_PCRx = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.temp2_PCRy = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.current_buffer = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.next_buffer = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        
+        self.State_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.Sed_C = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.XFlux_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.YFlux_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.NewState_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.oldGradients_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.oldOldGradients_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.predictedGradients_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.dU_by_dt_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.erosion_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.deposition_Sed = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        
+        self.Auxiliary = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.ShipPressure = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.DissipationFlux = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
+        self.ContSource = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.float32, device=device)
+        self.Breaking = wp.zeros(shape=(sim_params.WIDTH, sim_params.HEIGHT), dtype=wp.vec4, device=device)
