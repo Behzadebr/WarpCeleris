@@ -47,7 +47,7 @@ The Python Wave Simulator Project, part of the Celeris2023 initiative, aims to m
     - Configure simulation parameters in the provided JSON files.
     - Execute the simulation script:
     ```sh
-    python simulator.py
+    python run.py
     ```
 
 ## Contributions
